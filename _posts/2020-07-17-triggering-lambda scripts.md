@@ -1,9 +1,9 @@
 ---
 layout: post
-title: "How to run scripts in AWS"
-subtitle: "using a variety of triggers"
-date: 2020-07-17 00:30:00 -0400
-background: '/img/posts/09.jpg'
+title: "Mama"
+subtitle: "De liefste mama van de hele wereld"
+date: 2020-08-17 00:30:00 -0400
+background: '/img/posts/01.jpg'
 ---
 ## The problem
 People often want to run a piece of code whenever a certain condition is met. The most intuitive method of doing this is using some kind of scheduler, which constantly checks whether the condition is met, and then decides whether the script should run or not. The example below will run the `runScript()` method 
