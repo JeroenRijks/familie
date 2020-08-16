@@ -1,9 +1,9 @@
-title:              Jeroen Rijks
+title:              Mijn familie
 email:              jeroen-rijks@hotmail.com
-description:        Jeroen's blog
+#description:
 author:             Jeroen Rijks
 baseurl:            ""
-url:                "https://jeroenrijks.github.io"
+url:                "https://family.jeroenrijks.com"
 
 # Social Profiles
 github_username:    JeroenRijks
