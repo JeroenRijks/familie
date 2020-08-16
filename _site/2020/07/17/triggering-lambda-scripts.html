@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>
+    How to run scripts in AWS - Jeroen Rijks
+    
+  </title>
+
+  <meta name="description" content="The problem People often want to run a piece of code whenever a certain condition is met. The most intuitive method of doing this is using some kind of sched...">
+
+  <link href='https://fonts.googleapis.com/css?family=Lora:400,700,400italic,700italic' rel='stylesheet' type='text/css'>
+  <link href='https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+
+  <link rel="stylesheet" href="/assets/vendor/bootstrap/css/bootstrap.min.css">
+
+  <link rel="stylesheet" href="/assets/vendor/fontawesome-free/css/all.min.css">
+
+  <link rel="stylesheet" href="/assets/main.css">
+  <link rel="canonical" href="http://localhost:4000/2020/07/17/triggering-lambda-scripts.html">
+  <link rel="alternate" type="application/rss+xml" title="Jeroen Rijks" href="/feed.xml">
+
+</head>
+
+
+<body>
+
+  <!-- Navigation -->
+<nav class="navbar navbar-expand-lg navbar-light fixed-top" id="mainNav">
+  <div class="container">
+    <a class="navbar-brand" href="/">Jeroen Rijks</a>
+    <button class="navbar-toggler navbar-toggler-right" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+      Menu
+      <i class="fa fa-bars"></i>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarResponsive">
+      <ul class="navbar-nav ml-auto">
+        <li class="nav-item">
+          <a class="nav-link" href="/">Home</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/about">About</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/posts">Posts</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/contact">Contact</a>
+        </li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+
+  <!-- Page Header -->
+
+<header class="masthead" style="background-image: url('/img/posts/09.jpg')">
+  
+    <div class="overlay"></div>
+    <div class="container">
+      <div class="row">
+        <div class="col-lg-8 col-md-10 mx-auto">
+          <div class="post-heading">
+            <h1>How to run scripts in AWS</h1>
+            
+            <h2 class="subheading">using a variety of triggers</h2>
+            
+            <span class="meta">Posted by
+              <a href="#">Jeroen Rijks</a>
+              on July 17, 2020 &middot; <span class="reading-time" title="Estimated read time">
+  
+   9 mins  read </span>
+
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="row">
+      <div class="col-lg-8 col-md-10 mx-auto">
+
+        <h2 id="the-problem">The problem</h2>
+<p>People often want to run a piece of code whenever a certain condition is met. The most intuitive method of doing this is using some kind of scheduler, which constantly checks whether the condition is met, and then decides whether the script should run or not. The example below will run the <code class="highlighter-rouge">runScript()</code> method</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>// really bad pseudocode
+
+hour = Time.getHour()
+if hour = 7
+  runScript()
+else
+  wait for 1 hour
+  go to top
+end
+
+def runScript
+  script code here...
+end
+
+</code></pre></div></div>
+
+<p>However, this code needs to run constantly throughout the day, to check whether it should run <code class="highlighter-rouge">runScript()</code>. This is mildly annoying if it’s running on your local machine, since you need your computer to be on, and running the process at 7am. When you move this to the cloud, it becomes even more impractical, since you’re paying per minute of server time. This is especially annoying because most of this server-time is spent checking the time, instead of actually running the script. For a script that runs for a minute every day, you’d be overpaying for your server by a factor of <code class="highlighter-rouge">60 * 24 = 1440</code>.</p>
+
+<p>Note that this concept applies to any script that only runs when a condition is met - you’re not just paying for script run-time, but also to constantly check whether the condition is met.</p>
+
+<h2 id="separating-condition-checking-from-script-running">Separating condition-checking from script-running</h2>
+
+<p>AWS Lambda lets you run scripts using their “serverless” model, in which you supply the code, and they’ll run it by provisioning whatever server you want, until the script execution is finished. You only pay while your script is running. This only leaves a single challenge - how do you ensure that this script only runs when its condition is met? The solution depends on your implementation, and I’ll discuss two scenarios, in which the Lambda script is triggered at either a certain time, or using a webhook.</p>
+
+<h2 id="time-trigger">Time trigger</h2>
+<p>We’ll try to create a lambda function that says “Hello world”, and run it at midday every day.</p>
+
+<h4 id="creating-the-lambda-function">Creating the Lambda function</h4>
+<p>First, I’ll log into my AWS account, and head to the Lambdas dashboard.</p>
+
+<p><img class="img-fluid" src="/assets/img/lambda_dashboard.png" alt="Lambda dashboard" /></p>
+
+<p>I’ll choose to create a new lambda, and choose to run it in Python 3.8 (arbitrarily, because I’m just as bad at all programming languages).</p>
+
+<p><img class="img-fluid" src="/assets/img/new_lambda_function.png" alt="Creating a new lambda function" /></p>
+
+<p>This takes me to an in-browser editor, with the following code:</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>import json
+
+def lambda_handler(event, context):
+    # TODO implement
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Hello from Lambda!')
+    }
+</code></pre></div></div>
+
+<p>When the lambda function is triggered, it will run the <code class="highlighter-rouge">lambda_handler()</code> event. For our purposes, I’ll change it to</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>import json
+
+def lambda_handler(event, context):
+    run_script()
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Hello from Lambda!')
+    }
+
+def run_script():
+    print("Hello world")
+</code></pre></div></div>
+
+<p>When this runs, I expect my Lambda function’s log to contain “Hello world”. To test this expectation, I pressed the “Test” button, which creates a new test event, simulating a JSON payload that gets passed into my function, under <code class="highlighter-rouge">context</code>. I’m not using any external variables in my script, so I accept the default values, and create the test event.</p>
+
+<p>After saving, running this test event shows the JSON response, which shows that my <code class="highlighter-rouge">run_script()</code> function ran. You’re now free to edit this, to do whatever you need it to do.</p>
+
+<p><img class="img-fluid" src="/assets/img/execution_results.png" alt="Test event results" /></p>
+
+<h4 id="triggering-the-lambda-function-at-midday">Triggering the lambda function at midday</h4>
+<p>To avoid paying for a server to see if the time condition is met, we want to outsource this to a managed service - AWS CloudWatch. CloudWatch is usually used because it offers insights on resource usage, but we’ll use it because it also lets you send notifications (using AWS SNS) at customisable intervals, which is exactly what we need. We’ll create a Lambda-invoking notification in AWS SNS, and then a CloudWatch rule that sends this SNS notification.</p>
+
+<p>First, we go to the SNS Topics dashboard, and create a new Topic (notification type). The topic is really simple and doesn’t need anything other than a name (I’ve chosen <code class="highlighter-rouge">InvokeLambdaMidday</code>).</p>
+
+<p>Next, I head over to the CloudWatch rules dashboard, and create a new rule. I’ll select a scheduled rule for 12am every day. This is done using a cron expression, which follows the <code class="highlighter-rouge">minute hour day-of-month month day-of-week year</code> format. For example, <code class="highlighter-rouge">0 12 * * ? *</code> means “Run at 12:00 every day”. Go to the <a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/ScheduledEvents.html">AWS docs</a> to learn more.</p>
+
+<p><img class="img-fluid" src="/assets/img/new_rule.png" alt="Cloudwatch rule" /></p>
+
+<p><img class="img-fluid" src="/assets/img/new_rule_2.png" alt="Cloudwatch rule" /></p>
+
+<p>Going back to my Lambda function, I can now add a trigger, so that it is invoked every time the SNS topic sends a notification at midday. This trigger should provide the SNS topic with the appropriate permissions for invoking the Lambda function. Under the Lambda function’s permissions tab, its access policy should be set to something like:</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>{
+  "Version": "2012-10-17",
+  "Id": "default",
+  "Statement": [
+    {
+      "Sid": "lambda-e3f578a6-3dc2-4d88-b3d8-73fc8c80068a",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "sns.amazonaws.com"
+      },
+      "Action": "lambda:InvokeFunction",
+      "Resource": "arn:aws:lambda:eu-west-2:659974564728:function:helloWorldAtMidday",
+      "Condition": {
+        "ArnLike": {
+          "AWS:SourceArn": "arn:aws:sns:eu-west-2:659974564728:InvokeMiddayLambda"
+        }
+      }
+    }
+  ]
+}
+</code></pre></div></div>
+<p>This essentially says that the <code class="highlighter-rouge">helloWorldAtMidday</code> function may be invoked by SNS, if the SNS topic in question is called <code class="highlighter-rouge">InvokeMiddayLambda</code>.</p>
+
+<p><img class="img-fluid" src="/assets/img/add_trigger.png" alt="Add trigger" /></p>
+
+<p>Finally, to test this SNS-to-Lambda link, I’ll publish a message in the SNS topic manually. I’ll select the correct SNS topic, select publish message, and just chuck <code class="highlighter-rouge">asdf</code> into the message body, because it won’t let me keep it blank. After publishing the message, I’ll head back over to the Lambda, and under the Monitoring tab, I can see that its most recent invocation was at the current time.</p>
+
+<h2 id="webhook-trigger">Webhook trigger</h2>
+
+<p>Triggering a Lambda function from within your code is very simple. AWS provide software development kits (SDKs) that allow you to manage AWS resources within your own codebase. For Python, the SDK is called <code class="highlighter-rouge">boto3</code>, and its Lambda component can be imported using</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>import boto3
+client = boto3.client('lambda')
+</code></pre></div></div>
+
+<p>This client represents the internet-facing Lambda API, which you can send requests to using <a href="https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/lambda.html#Lambda.Client.invoke">this documentation</a>. In our case, we want to invoke the Lambda function, so we would want something like this:</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>response = client.invoke(
+    FunctionName='helloWorldAtMidday',  # function name
+    InvocationType='RequestResponse',  # `RequestResponse` waits for the lambda function's response, while `Event` is asynchronous.
+    LogType='Tail', # Setting this to `Tail` would show the Lambda's logs in this codebase's own logs
+    ClientContext='',  # We can leave this empty
+    Payload=b'bytes'|file, # If your Lambda function takes arguments as input, then this is where you'd pass those in, as JSON. This will be passed into the function's lambda_handler as the `payload` argument
+    Qualifier='string' # If you have multiple versions or aliases of your Lambda function, then you can specify them here. For simple Lambdas, don't bother
+)
+</code></pre></div></div>
+
+<h4 id="authentication">Authentication</h4>
+<p>It wouldn’t be very secure if anybody can invoke your Lambda functions in AWS, so you’ll need to “authenticate” your server with AWS. This can be done by passing in AWS credentials into the server with the <code class="highlighter-rouge">AWS_ACCESS_KEY_ID</code> and <code class="highlighter-rouge">AWS_SECRET_ACCESS_KEY</code> environment variables, which will be automatically picked up by <code class="highlighter-rouge">boto3</code>.</p>
+
+<p>It’s best practice to create a separate AWS IAM (identity and access management) user for your server, with minimal permissions assigned to it (including permission to invoke the Lambda function). An example would be</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>{
+  "Version": "2012-10-17",
+  "Id": "default",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "lambda:InvokeFunction",
+      "Resource": "arn:aws:lambda:eu-west-2:659974564728:function:helloWorldAtMidday",
+    }
+  ]
+}
+</code></pre></div></div>
+
+<h4 id="implementation">Implementation</h4>
+<p>To run this script as a response to a webhook, set up a webhook endpoint, which runs this code, and then, if necessary, returns a successful response if the Lambda has run successfully.</p>
+
+
+        <hr>
+
+        <div class="clearfix">
+
+          
+          <a class="btn btn-primary float-left" href="/2020/06/14/cidr_notation.html" data-toggle="tooltip" data-placement="top" title="CIDR notation">&larr; Previous<span class="d-none d-md-inline">
+              Post</span></a>
+          
+          
+
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Footer -->
+
+<hr>
+
+<footer>
+  <div class="container">
+    <div class="row">
+      <div class="col-lg-8 col-md-10 mx-auto">
+        <ul class="list-inline text-center">
+          
+          <li class="list-inline-item">
+            <a href="mailto:jeroen-rijks@hotmail.com">
+              <span class="fa-stack fa-lg">
+                <i class="fas fa-circle fa-stack-2x"></i>
+                <i class="far fa-envelope fa-stack-1x fa-inverse"></i>
+              </span>
+            </a>
+          </li>
+          
+          
+          
+          
+          <li class="list-inline-item">
+            <a href="https://www.linkedin.com/in/JeroenRijks">
+              <span class="fa-stack fa-lg">
+                <i class="fas fa-circle fa-stack-2x"></i>
+                <i class="fab fa-linkedin fa-stack-1x fa-inverse"></i>
+              </span>
+            </a>
+          </li>
+          
+          
+          <li class="list-inline-item">
+            <a href="https://github.com/JeroenRijks">
+              <span class="fa-stack fa-lg">
+                <i class="fas fa-circle fa-stack-2x"></i>
+                <i class="fab fa-github fa-stack-1x fa-inverse"></i>
+              </span>
+            </a>
+          </li>
+          
+        </ul>
+        <p class="copyright text-muted">Copyright &copy; Jeroen Rijks 2020</p>
+      </div>
+    </div>
+  </div>
+</footer>
+
+
+  <script src="/assets/vendor/jquery/jquery.min.js"></script>
+<script src="/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script src="/assets/vendor/startbootstrap-clean-blog/js/clean-blog.min.js"></script>
+
+<script src="/assets/scripts.js"></script>
+
+
+
+
+<!--  <!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id="></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', '');
+</script>
+
+-->
+
+</body>
+
+</html>

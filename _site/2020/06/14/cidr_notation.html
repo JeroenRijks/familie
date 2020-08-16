@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>
+    CIDR notation - Jeroen Rijks
+    
+  </title>
+
+  <meta name="description" content="When I started working at Transreport, I was working with existing infrastructure, which other people had set in place for me. This let me get by without exp...">
+
+  <link href='https://fonts.googleapis.com/css?family=Lora:400,700,400italic,700italic' rel='stylesheet' type='text/css'>
+  <link href='https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+
+  <link rel="stylesheet" href="/assets/vendor/bootstrap/css/bootstrap.min.css">
+
+  <link rel="stylesheet" href="/assets/vendor/fontawesome-free/css/all.min.css">
+
+  <link rel="stylesheet" href="/assets/main.css">
+  <link rel="canonical" href="http://localhost:4000/2020/06/14/cidr_notation.html">
+  <link rel="alternate" type="application/rss+xml" title="Jeroen Rijks" href="/feed.xml">
+
+</head>
+
+
+<body>
+
+  <!-- Navigation -->
+<nav class="navbar navbar-expand-lg navbar-light fixed-top" id="mainNav">
+  <div class="container">
+    <a class="navbar-brand" href="/">Jeroen Rijks</a>
+    <button class="navbar-toggler navbar-toggler-right" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+      Menu
+      <i class="fa fa-bars"></i>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarResponsive">
+      <ul class="navbar-nav ml-auto">
+        <li class="nav-item">
+          <a class="nav-link" href="/">Home</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/about">About</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/posts">Posts</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/contact">Contact</a>
+        </li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+
+  <!-- Page Header -->
+
+<header class="masthead" style="background-image: url('/img/posts/09.jpg')">
+  
+    <div class="overlay"></div>
+    <div class="container">
+      <div class="row">
+        <div class="col-lg-8 col-md-10 mx-auto">
+          <div class="post-heading">
+            <h1>CIDR notation</h1>
+            
+            <h2 class="subheading">What I learnt by creating AWS VPCs and subnets</h2>
+            
+            <span class="meta">Posted by
+              <a href="#">Jeroen Rijks</a>
+              on June 14, 2020 &middot; <span class="reading-time" title="Estimated read time">
+  
+   6 mins  read </span>
+
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="row">
+      <div class="col-lg-8 col-md-10 mx-auto">
+
+        <p>When I started working at Transreport, I was working with existing infrastructure, which other people had set in place for me. This let me get by without exposing me to a huge gap in my knowledge - networks, and how they work.</p>
+
+<p>When creating VPCs in AWS, users need to input the VPC’s CIDR block, which is a range of IP addresses, expressed (for IPv4 IP addresses) as <code class="highlighter-rouge">a.b.c.d/x</code>, where <code class="highlighter-rouge">a</code>, <code class="highlighter-rouge">b</code>, <code class="highlighter-rouge">c</code> and <code class="highlighter-rouge">d</code> are integers between 0 and 255, and <code class="highlighter-rouge">x</code> is an integer between 1 and 32. This is because IPv4 IP addresses can be written in binary as four 8-digit binary numbers: <code class="highlighter-rouge">aaaaaaaa.bbbbbbbb.cccccccc.dddddddd</code>, with <code class="highlighter-rouge">x</code> denoting how many of the 32 digits describe the network’s address. Therefore, <code class="highlighter-rouge">32 - x</code> describes how many digits are dedicated to IP addresses inside this network. For example, the <code class="highlighter-rouge">10.1.0.0/16</code> CIDR block can be translated to <code class="highlighter-rouge">00001010.00000001.xxxxxxxx.xxxxxxxx</code></p>
+
+<p>As a rule, the <code class="highlighter-rouge">32 - x</code> binary digits are set as zeros in CIDR notation, which is why a <code class="highlighter-rouge">10.1.1.0/16</code> CIDR block would be impossible.</p>
+
+<h3 id="network-sizes">Network sizes</h3>
+<p>As you may have noticed, smaller <code class="highlighter-rouge">x</code> values give larger networks, because a network has <code class="highlighter-rouge">2^(32-x)</code> unique numbers inside it, each mapping to one IP address.</p>
+
+<h3 id="subnets">Subnets</h3>
+<p>Once I had figured this out, and created a VPC, I found my next problem - subnets. Subnets are subdivisions of the network they belong to, used to break networks down into smaller logical components, each dedicated to their own purpose, like hosting the database, running an API, etc. This can be useful for a host of reasons:</p>
+
+<h5 id="security">Security</h5>
+<p>With an understanding of which components communicate with which other components, subnets allowed me to set more fine-grained control over the flow of information inside my network. If the database has no reason to interact with our queueing system, then the database subnet can be set to not receive incoming or transmit outgoing traffic from the queue’s subnet.</p>
+
+<h5 id="improve-network-performance">Improve network performance</h5>
+<p>Given that all devices in a network has an entry point into it, each device must dedicate resources to filtering to only respond to requests meant for itself. Subnets have a more limited scope than their parent network, meaning that the total incoming traffic is reduced for each device, with an effect spread across all network devices.</p>
+
+<h5 id="an-understanding-of-the-networks-growth">An understanding of the network’s growth</h5>
+<p>Controlling the number of hosts available to each infrastructure component may be useful, in order to assign IP addresses to all your hosts necessary. You can dedicate a certain number of hosts to each subnet (depending on the size of the subnet mask), and leave room for each subnet to grow in the future.</p>
+
+<h3 id="how-subnets-work">How subnets work</h3>
+<p>If you want to split a <code class="highlighter-rouge">10.1.0.0/16</code> network into subnets, you essentially only have <code class="highlighter-rouge">32 - x</code> binary digits to allocate to these subnets, which in this case is <code class="highlighter-rouge">16</code>: <code class="highlighter-rouge">00000000.00000000</code>. Just like with networks themselves, some of these digits will be dedicated to describing the subnet’s address, and the rest will be dedicated to the IP addresses in this subnet. Large subnets need many IP addresses, leaving fewer available for the subnet’s address. For example, if my subnet needs a maximum of 4 hosts, I only need 3 digits for that, so 13 can be dedicated to the subnet’s address, which could range between <code class="highlighter-rouge">10.1.0.0/3</code> (<code class="highlighter-rouge">00001010.00000001.00000000.00000xxx</code>), and <code class="highlighter-rouge">10.1.255.248/3</code> (<code class="highlighter-rouge">00001010.00000001.11111111.11111xxx</code>). Careful decisions around subnet addresses and subnet sizes allow users to “future-proof” their networks, allowing for scaling of a subnet, without other subnets getting in the way.
+For a given subnet, its size is conventionally described using its “subnet mask”, which is the number you would get if all network address values were 1s. Therefore, <code class="highlighter-rouge">10.1.255.248/3</code> would give 255.255.255.248</p>
+
+<p>I used Terraform’s <a href="https://www.terraform.io/docs/configuration/functions/cidrsubnet.html">cidrsubnet function</a> to define my subnets. This function takes three arguments:</p>
+<ul>
+  <li><code class="highlighter-rouge">prefix</code>, the network’s CIDR block</li>
+  <li><code class="highlighter-rouge">newbits</code>, the number by which to extend the prefix. The bigger this is, the smaller the subnet!</li>
+  <li><code class="highlighter-rouge">netnum</code>, which determines the value of the newbits (the subnet’s address)</li>
+</ul>
+
+<h3 id="individual-ip-addressesin-cidr-notation">Individual IP addresses`in CIDR notation</h3>
+<p>When I needed to temporarily whitelist an IP address, I wasn’t sure how to do that, because AWS security groups and NACLs require inputs to use CIDR notation. The solution was very simple; as the number after the <code class="highlighter-rouge">/</code> gets larger, the range of IP addresses gets smaller. Therefore, to limit this range to a single IP address, simply add the <code class="highlighter-rouge">/32</code> suffix to the IP address, and your IP address will be converted into CIDR notation!</p>
+
+<h3 id="conclusion">Conclusion</h3>
+<p>I still have lots to learn on networking, so if you identify any holes in my knowledge, or would like to start a conversation about this with me, then please reach out to me by email.</p>
+
+
+        <hr>
+
+        <div class="clearfix">
+
+          
+          <a class="btn btn-primary float-left" href="/2020/04/12/shared_efs_volume.html" data-toggle="tooltip" data-placement="top" title="Sharing a filesystem between multiple Kubernetes workers">&larr; Previous<span class="d-none d-md-inline">
+              Post</span></a>
+          
+          
+          <a class="btn btn-primary float-right" href="/2020/07/17/triggering-lambda-scripts.html" data-toggle="tooltip" data-placement="top" title="How to run scripts in AWS">Next<span class="d-none d-md-inline">
+              Post</span> &rarr;</a>
+          
+
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Footer -->
+
+<hr>
+
+<footer>
+  <div class="container">
+    <div class="row">
+      <div class="col-lg-8 col-md-10 mx-auto">
+        <ul class="list-inline text-center">
+          
+          <li class="list-inline-item">
+            <a href="mailto:jeroen-rijks@hotmail.com">
+              <span class="fa-stack fa-lg">
+                <i class="fas fa-circle fa-stack-2x"></i>
+                <i class="far fa-envelope fa-stack-1x fa-inverse"></i>
+              </span>
+            </a>
+          </li>
+          
+          
+          
+          
+          <li class="list-inline-item">
+            <a href="https://www.linkedin.com/in/JeroenRijks">
+              <span class="fa-stack fa-lg">
+                <i class="fas fa-circle fa-stack-2x"></i>
+                <i class="fab fa-linkedin fa-stack-1x fa-inverse"></i>
+              </span>
+            </a>
+          </li>
+          
+          
+          <li class="list-inline-item">
+            <a href="https://github.com/JeroenRijks">
+              <span class="fa-stack fa-lg">
+                <i class="fas fa-circle fa-stack-2x"></i>
+                <i class="fab fa-github fa-stack-1x fa-inverse"></i>
+              </span>
+            </a>
+          </li>
+          
+        </ul>
+        <p class="copyright text-muted">Copyright &copy; Jeroen Rijks 2020</p>
+      </div>
+    </div>
+  </div>
+</footer>
+
+
+  <script src="/assets/vendor/jquery/jquery.min.js"></script>
+<script src="/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script src="/assets/vendor/startbootstrap-clean-blog/js/clean-blog.min.js"></script>
+
+<script src="/assets/scripts.js"></script>
+
+
+
+
+<!--  <!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id="></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', '');
+</script>
+
+-->
+
+</body>
+
+</html>

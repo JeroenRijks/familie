@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>
+    Sharing a filesystem between multiple Kubernetes workers - Jeroen Rijks
+    
+  </title>
+
+  <meta name="description" content="Timeout errors and asynchronous jobs If a client sends a request to a server, and doesn’t receive a response for a long time, it will typically throw a timeo...">
+
+  <link href='https://fonts.googleapis.com/css?family=Lora:400,700,400italic,700italic' rel='stylesheet' type='text/css'>
+  <link href='https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+
+  <link rel="stylesheet" href="/assets/vendor/bootstrap/css/bootstrap.min.css">
+
+  <link rel="stylesheet" href="/assets/vendor/fontawesome-free/css/all.min.css">
+
+  <link rel="stylesheet" href="/assets/main.css">
+  <link rel="canonical" href="http://localhost:4000/2020/04/12/shared_efs_volume.html">
+  <link rel="alternate" type="application/rss+xml" title="Jeroen Rijks" href="/feed.xml">
+
+</head>
+
+
+<body>
+
+  <!-- Navigation -->
+<nav class="navbar navbar-expand-lg navbar-light fixed-top" id="mainNav">
+  <div class="container">
+    <a class="navbar-brand" href="/">Jeroen Rijks</a>
+    <button class="navbar-toggler navbar-toggler-right" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+      Menu
+      <i class="fa fa-bars"></i>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarResponsive">
+      <ul class="navbar-nav ml-auto">
+        <li class="nav-item">
+          <a class="nav-link" href="/">Home</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/about">About</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/posts">Posts</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/contact">Contact</a>
+        </li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+
+  <!-- Page Header -->
+
+<header class="masthead" style="background-image: url('/img/posts/02.jpg')">
+  
+    <div class="overlay"></div>
+    <div class="container">
+      <div class="row">
+        <div class="col-lg-8 col-md-10 mx-auto">
+          <div class="post-heading">
+            <h1>Sharing a filesystem between multiple Kubernetes workers</h1>
+            
+            <h2 class="subheading">Using EFS</h2>
+            
+            <span class="meta">Posted by
+              <a href="#">Jeroen Rijks</a>
+              on April 12, 2020 &middot; <span class="reading-time" title="Estimated read time">
+  
+   8 mins  read </span>
+
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="row">
+      <div class="col-lg-8 col-md-10 mx-auto">
+
+        <h2 id="timeout-errors-and-asynchronous-jobs">Timeout errors and asynchronous jobs</h2>
+<p>If a client sends a request to a server, and doesn’t receive a response for a long time, it will typically throw a timeout error. This marks the request as failed, and is done to stop users from waiting indefinitely. These timeout errors can happen for a variety of reasons, such as network infrastructure errors or bad error handling on the server side. Sometimes, this error is thrown when a perfectly valid request simply takes too long to process server-side.</p>
+
+<p>To cut down on timeout errors, compute-intensive tasks can be handled asynchronously. I’ve seen this implemented in two ways, and in both cases, it starts with a synchronous response to the request, effectively saying “We’ve received your request, it’s valid, and are dealing with it”.</p>
+
+<h4 id="polling">Polling</h4>
+<p>The last time I saw asynchronous PDF generation, the requester would then poll the server every second, asking if the PDF is ready yet. The server would give 2xx responses which would say “No, it’s not ready but keep asking me”, until the PDF was generated. The next polling request would receive the PDF as a response.</p>
+
+<h4 id="websockets">Websockets</h4>
+<p>The solution that’s being implemented now uses websockets. These open up a connection between the client and the server, allowing the server to send messages without receiving a request first. When the PDF is generated, the server sends a websocket “PDF is ready” message to the client. The client then sends an HTTPS request requesting the PDF, and the server responds synchronously.</p>
+
+<h4 id="polling-vs-websockets">Polling vs Websockets</h4>
+<p>Polling increases the total amount of network traffic, but the implementation I saw was used between two microservices running in the same Kubernetes cluster. Websockets require an open connection between clients and servers, and I don’t know whether this scales very well. Maybe it’ll be worth another post in the future.</p>
+
+<h2 id="our-problem">Our problem</h2>
+<p>To avoid timeout errors in Passenger Assist, Transreport have made our PDF reports asynchronous. This works great in local development, where one machine runs both Rails and Sidekiq. This is because the Rails application has access to the PDF generated by Sidekiq. However, in Kubernetes, Rails is run on different pods to Sidekiq, preventing the API from accessing the generated PDF.</p>
+
+<p>To solve this issue, a developer suggested writing PDFs to S3 in Sidekiq, and reading them from Rails. However, this would increase latency by sending requests all the way to the S3 API. Given the fact that Rails and Sidekiq are both running on the same Kubernetes cluster, this seems like a wasted opportunity. Therefore, I suggested mounting a volume into the worker nodes, to share the PDF between the processes locally. To solve this, I initially suggested that we could simply mount a directory from each EC2 instance straight into all Sidekiq and Rails pods running on it, but because the pods are spread across multiple workers, this would fail in cases where the cooperating Rails and Sidekiq pods weren’t running on the same machine. Therefore, I decided to use AWS EFS, a shared filesystem that can be mounted into all of our worker nodes, and then into all of our Sidekiq and Rails pods.</p>
+
+<p><a href="https://aws.amazon.com/premiumsupport/knowledge-center/eks-pods-efs/">This AWS blog post</a> offers a solution for managing EFS volumes in EKS clusters.</p>
+
+<h4 id="solution-overview">Solution overview</h4>
+
+<p>The solution creates a Kubernetes Persistent Volume Claim, which is available to other resources in the cluster (RBAC-permitting). An <code class="highlighter-rouge">efs-provisioner</code> pod (using a Docker image provided by <code class="highlighter-rouge">quay.io</code>) “supplies” this PVC with the EFS volume, so that any Kubernetes pod with access to the PVC can mount the EFS volume. This solution uses an existing EFS volume, so we’ll start with that.</p>
+
+<h4 id="implementation---aws-side">Implementation - AWS side</h4>
+
+<p>When working with unfamiliar tech, I usually get it to run manually first, and then import it into Terraform afterwards.</p>
+
+<p>First, I created a general purpose, bursting filesystem in the EFS console. After specifying the EFS type, I was prompted to create mount targets, which are used to grant access to the filesystem. Therefore, I created a mount target in each EKS subnet. After translating this to Terraform, it looks like this:</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>resource "aws_efs_file_system" "efs" {
+  creation_token    = "&lt;name&gt;-${terraform.workspace}"
+  performance_mode  = "generalPurpose"
+  throughput_mode   = "bursting"
+  encrypted         = "true"
+}
+
+resource "aws_efs_mount_target" "efs-mt" {
+  count = length(local.private_subnets[terraform.workspace])  # Create one mount target for each subnet
+  file_system_id  = aws_efs_file_system.efs.id
+  subnet_id = element(local.private_subnets[terraform.workspace], count.index)
+}
+</code></pre></div></div>
+
+<p>However, when I tried creating the efs-provisioner pod, it stalled at ContainerCreating, and its logs revealed that the volume was failing to mount into the container.</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Warning FailedMount 1m kubelet, &lt;ec2-instance-name&gt; MountVolume.SetUp failed for volume "pv-volume" : mount failed: exit status 32
+</code></pre></div></div>
+
+<p>Luckily, I’m not the first person to find this issue, and the internet told me that the mount targets need to allow inbound TCP connections on port 2049. After adding this to Terraform, my <code class="highlighter-rouge">efs.tf</code> file looked like this:</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>resource "aws_efs_file_system" "efs" {
+  creation_token    = "&lt;name&gt;-${terraform.workspace}"
+  performance_mode  = "generalPurpose"
+  throughput_mode   = "bursting"
+  encrypted         = "true"
+}
+
+resource "aws_efs_mount_target" "efs-mt" {
+  count = length(local.private_subnets[terraform.workspace])  # Create one mount target for each subnet
+  file_system_id  = aws_efs_file_system.efs.id
+  subnet_id = element(local.private_subnets[terraform.workspace], count.index)
+  security_groups = [aws_security_group.ingress_efs.id]
+}
+
+resource "aws_security_group" "ingress_efs" {
+  name        = "&lt;name&gt;-${terraform.workspace}-sg"
+  description = "Allow EKS nodes to mount EFS storage volumes - Managed by Terraform"
+  vpc_id      = local.vpc_id[terraform.workspace]
+
+  ingress {
+    security_groups = [local.eks_security_group]
+    from_port = 2049
+    to_port = 2049
+    protocol = "tcp"
+  }
+
+  egress {
+    security_groups = [local.eks_security_group]
+    from_port = 2049
+    to_port = 2049
+    protocol = "tcp"
+  }
+}
+</code></pre></div></div>
+
+<h4 id="implementation---kubernetes-side">Implementation - Kubernetes Side</h4>
+
+<p>The AWS blog post summarises the Kubernetes implementation, which is pretty simple. To get separate EFS volumes for each environment, I defined the EFS ID in environment-specific values files, and passed these into the configmap:</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>// charts/pa-config/templates/efs_configmap.yaml
+...
+data:
+  file.system.id: 
+  aws.region: 
+  provisioner.name: 
+  dns.name: ".efs..amazonaws.com"
+</code></pre></div></div>
+<p>These values are called by the <code class="highlighter-rouge">efs_deployment.yaml</code> file, which links the Terraform-managed EFS volume and the <code class="highlighter-rouge">efs_claim.yaml</code> PVC.</p>
+
+<p>Finally, to mount this volume into my application pods, the pods mount the PVC:</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>volumes:
+- name: efs-pvc
+  persistentVolumeClaim:
+    claimName: "efs-pa-"
+</code></pre></div></div>
+<p>and the pod containers mount the volume too:</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>volumeMounts:
+- name: efs-pvc
+  mountPath: "/&lt;mount-path&gt;"
+</code></pre></div></div>
+
+<h4 id="conclusion">Conclusion</h4>
+
+<p>Now, using <code class="highlighter-rouge">kubectl exec -it -n &lt;namespace&gt; &lt;pod-name&gt; &lt;command&gt;</code>, we can test the solution. First, I created a file in the pod-defined mount path (<code class="highlighter-rouge">echo file_contents &gt;&gt; /&lt;mount-path&gt;/test_file</code>) of the PDF-creating service. Then, <code class="highlighter-rouge">exec</code>ing into the PDF-sending service, <code class="highlighter-rouge">ls /&lt;mount-path&gt;</code> shows <code class="highlighter-rouge">test_file</code>, and <code class="highlighter-rouge">cat /&lt;mount-path&gt;/test_file</code> shows <code class="highlighter-rouge">file_contents</code>. Pushing the new Helm charts to our Helm repository means that future releases will work for any environment, so long as <code class="highlighter-rouge">efs.enabled=true</code>.</p>
+
+
+        <hr>
+
+        <div class="clearfix">
+
+          
+          <a class="btn btn-primary float-left" href="/2020/04/09/cloudflare-ddos-protection.html" data-toggle="tooltip" data-placement="top" title="Implementing CloudFlare's DDoS protection">&larr; Previous<span class="d-none d-md-inline">
+              Post</span></a>
+          
+          
+          <a class="btn btn-primary float-right" href="/2020/06/14/cidr_notation.html" data-toggle="tooltip" data-placement="top" title="CIDR notation">Next<span class="d-none d-md-inline">
+              Post</span> &rarr;</a>
+          
+
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Footer -->
+
+<hr>
+
+<footer>
+  <div class="container">
+    <div class="row">
+      <div class="col-lg-8 col-md-10 mx-auto">
+        <ul class="list-inline text-center">
+          
+          <li class="list-inline-item">
+            <a href="mailto:jeroen-rijks@hotmail.com">
+              <span class="fa-stack fa-lg">
+                <i class="fas fa-circle fa-stack-2x"></i>
+                <i class="far fa-envelope fa-stack-1x fa-inverse"></i>
+              </span>
+            </a>
+          </li>
+          
+          
+          
+          
+          <li class="list-inline-item">
+            <a href="https://www.linkedin.com/in/JeroenRijks">
+              <span class="fa-stack fa-lg">
+                <i class="fas fa-circle fa-stack-2x"></i>
+                <i class="fab fa-linkedin fa-stack-1x fa-inverse"></i>
+              </span>
+            </a>
+          </li>
+          
+          
+          <li class="list-inline-item">
+            <a href="https://github.com/JeroenRijks">
+              <span class="fa-stack fa-lg">
+                <i class="fas fa-circle fa-stack-2x"></i>
+                <i class="fab fa-github fa-stack-1x fa-inverse"></i>
+              </span>
+            </a>
+          </li>
+          
+        </ul>
+        <p class="copyright text-muted">Copyright &copy; Jeroen Rijks 2020</p>
+      </div>
+    </div>
+  </div>
+</footer>
+
+
+  <script src="/assets/vendor/jquery/jquery.min.js"></script>
+<script src="/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script src="/assets/vendor/startbootstrap-clean-blog/js/clean-blog.min.js"></script>
+
+<script src="/assets/scripts.js"></script>
+
+
+
+
+<!--  <!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id="></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', '');
+</script>
+
+-->
+
+</body>
+
+</html>
