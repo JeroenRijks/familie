@@ -27,7 +27,7 @@ Ik heb een hippe mama! Ik heb inmiddels geleerd dat jij altijd gelijk hebt, voor
 
 ## Fotos!
 Zelfs met een mopperende model (dat ben ik) zijn de photoshoots die Papa en jij maken altijd zo goed! Op het moment heeft Ellie deze foto (van December 2019) als haar telefoon-achtergrond! Ik zal in de toekomst meer mijn best te doen om zo gek te doen als nodig is voor de perfecte foto!
-<img class="img-fluid" src="{{site.baseurl}}/assets/img/FOTO VAN ELLIE HERE.jpg" alt="Strand!">
+<img class="img-fluid" src="{{site.baseurl}}/assets/img/strand.jpg" alt="Strand!">
 
 ## Gymnastiek-gedoe
 Ik vind het heel erg leuk dat jij dezelfde obsessie hebt met ligaamsbeheersing oefeningen als ik! Het is een beetje een traditie aan het worden om direct na het avondeten gekke handstanden te doen!
